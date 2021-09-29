@@ -1,0 +1,178 @@
+---
+# Compile HAProxy
+- name: Install HAProxy packages
+  package:
+    name:
+      - openssl-devel
+      - pcre-devel
+      - make
+      - gcc
+    state: present
+  tags: install
+
+- name: Get HAProxy {{ haproxy_ver }} sources
+  unarchive:
+    src: http://www.haproxy.org/download/{{ haproxy_ver | replace('.0', '') }}/src/haproxy-{{ haproxy_ver }}.tar.gz
+    dest: /tmp
+    remote_src: yes
+  tags: install
+
+- name: Default make HAProxy {{ haproxy_ver }}
+  make:
+    chdir: /tmp/haproxy-{{ haproxy_ver }}
+    params:
+      NUM_THREADS: 4
+      TARGET: linux-glibc
+      USE_OPENSSL: 1
+      USE_ZLIB: 1
+      USE_PCRE: 1
+  tags: install
+
+- name: Compile HAProxy {{ haproxy_ver }} sources
+  make:
+    chdir: /tmp/haproxy-{{ haproxy_ver }}
+    target: install
+    params:
+      NUM_THREADS: 4
+      TARGET: linux-glibc
+      USE_OPENSSL: 1
+      USE_ZLIB: 1
+      USE_PCRE: 1
+  tags: install
+
+- name: Create HAProxy systemd
+  make:
+    chdir: /tmp/haproxy-{{ haproxy_ver }}/admin/systemd
+  tags: install
+
+# Default service group / user
+- name: Create HAProxy Group
+  group:
+    name: "{{ haproxy_group }}"
+  tags: install
+
+- name: Create HAProxy User
+  user:
+    name: "{{ haproxy_user }}"
+    comment: "HAProxy User"
+    system: true
+    group: "{{ haproxy_group }}"
+  tags: install
+
+# Config default HAProxy
+- name: Create HAProxy server dirs
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ haproxy_user }}"
+    group: "{{ haproxy_group }}"
+    recurse: yes
+  loop:
+    - "{{ haproxy_install_dir }}"
+    - "/run/{{ haproxy_service_name }}"
+    - "{{ haproxy_install_dir }}/ssl"
+    - "{{ haproxy_conf_dir }}"
+  tags: install    
+
+- name: Copy HAProxy config
+  template:
+    src: haproxy.cfg.j2
+    dest: "{{ haproxy_install_dir }}/haproxy.cfg"
+    owner: "{{ haproxy_user }}"
+    group: "{{ haproxy_group }}"
+    mode: 0664
+  tags: install
+
+- name: Copy HAProxy errorfiles dir
+  copy:
+    src: /tmp/haproxy-{{ haproxy_ver }}/examples/errorfiles/
+    dest: "{{ haproxy_install_dir }}/errors"
+    owner: "{{ haproxy_user }}"
+    group: "{{ haproxy_group }}"
+    remote_src: yes
+  tags: install
+
+- name: Copy HAProxy binary
+  copy:
+    src: /usr/local/sbin/haproxy
+    dest: /usr/sbin/haproxy
+    mode: 0775
+    remote_src: yes
+  tags: install
+
+- name: Create HAProxy service
+  copy:
+    src: "/tmp/haproxy-{{ haproxy_ver }}/examples/{{ haproxy_service_name }}.init"
+    dest: "/etc/init.d/{{ haproxy_service_name }}"
+    mode: 0775
+    remote_src: yes
+  tags: install
+
+- name: Copy HAProxy errorfiles dir
+  template:
+    src: haproxy.init.j2
+    dest: "/etc/init.d/{{ haproxy_service_name }}"
+    owner: "{{ haproxy_user }}"
+    group: "{{ haproxy_group }}"
+    mode: 0775
+  tags: install
+
+- name: Generate an OpenSSL private key
+  openssl_privatekey:
+    path: "{{ haproxy_ssl_properties.certs_dir }}/haproxy-selfsigned.key"
+    size: "{{ haproxy_ssl_properties.key_size | default(4096) }}"
+    type: "{{ haproxy_ssl_properties.key_type | default('RSA') }}"
+  when: haproxy_enable_ssl|bool
+  notify: restart haproxy
+  tags: 
+    - config_ssl
+    - install
+
+- name: Generate an OpenSSL Certificate Signing Request with Subject information
+  openssl_csr:
+    path: "{{ haproxy_ssl_properties.certs_dir }}/haproxy-self-signed.csr"
+    privatekey_path: "{{ haproxy_ssl_properties.certs_dir }}/haproxy-self-signed.key"
+    country_name: "{{ haproxy_ssl_properties.country_name }}"
+    organization_name: "{{ haproxy_ssl_properties.organization_name }}"
+    common_name: "{{ haproxy_ssl_properties.server_hostname }}"
+  when: haproxy_enable_ssl|bool
+  notify: restart haproxy
+  tags:
+    - config_ssl
+    - install 
+
+- name: Generate a Self Signed OpenSSL certificate
+  openssl_certificate:
+    path: "{{ haproxy_ssl_properties.certs_dir }}/haproxy-selfsigned.crt"
+    privatekey_path: "{{ haproxy_ssl_properties.certs_dir }}/haproxy-selfsigned.key"
+    csr_path: "{{ haproxy_ssl_properties.certs_dir }}/haproxy-selfsigned.csr"
+    provider: selfsigned
+  when: haproxy_enable_ssl|bool
+  notify: restart haproxy
+  tags:
+    - config_ssl
+    - install
+
+- name: Create Self Signed cert for HAproxy conf
+  shell: |
+    cat {{ haproxy_ssl_properties.certs_dir }}/haproxy-self-signed.crt   \
+        {{ haproxy_ssl_properties.certs_dir }}/haproxy-self-signed.key > \
+        {{ haproxy_install_dir }}/ssl/haproxy-self-signed.pem
+  changed_when: no
+  tags:
+    - config_ssl
+    - install
+
+- name: Start HAProxy
+  service:
+    name: "{{ haproxy_service_name }}"
+    state: stopped
+    enabled: true
+    daemon_reload: true
+  tags: install
+
+- name: Clean HAProxy sources
+  file:
+    path: /tmp/haproxy-{{ haproxy_ver }}
+    state: absent
+  tags: install

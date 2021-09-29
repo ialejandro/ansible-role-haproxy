@@ -1,0 +1,22 @@
+---
+# HAProxy defaults
+haproxy_user: haproxy
+haproxy_group: haproxy
+haproxy_service_name: haproxy
+
+# HAProxy version
+haproxy_ver: 2.4.0
+
+# HAProxy dir install
+haproxy_install_dir: /etc/haproxy
+haproxy_conf_dir: "{{ haproxy_install_dir }}/conf.d"
+
+# HAProxy SSL properties
+haproxy_enable_ssl: false
+haproxy_ssl_properties: {}
+#  certs_dir: /path/to/certificates
+#  key_size: 2048
+#  key_type: RSA # Others include DSA, ECC, Ed25519, Ed448, X25519, X448
+#  country_name: {{ haproxy_ssl_country_name | default('ES
+#  organization_name: MY-ORGANIZATION
+#  server_hostname: MY-SERVER
